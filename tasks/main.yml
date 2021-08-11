@@ -1,0 +1,87 @@
+---
+
+
+- hosts: localhost
+  become: True
+  become_user: root
+  vars:
+    node_exporter_version: 1.2.0
+    node_exporter_arch: 'amd64'
+    ## node_exporter_download_url: https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-{{ node_exporter_arch }}.tar.gz
+
+    node_exporter_bin_path: /usr/local/bin/node_exporter
+
+    node_exporter_options: ''
+
+    node_exporter_state: started
+    node_exporter_enabled: true
+
+  tasks:
+
+  ##- name: download node exporter
+  ##  get_url:
+  ##   url: https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz
+  ##    dest: /tmp
+
+  - name: Download and unarchive node_exporter into temporary location.
+    unarchive:
+      src: "https://github.com/prometheus/node_exporter/releases/download/v1.2.0/node_exporter-1.2.0.linux-amd64.tar.gz"
+      dest: /tmp
+      remote_src: yes
+      mode: 0755
+    when: 
+      node_exporter_version_check.stdout is not defined
+      or node_exporter_version not in node_exporter_version_check.stdout
+
+  - name: Move node_exporter binary into place.
+    copy:
+      src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-{{ node_exporter_arch }}/node_exporter"
+      dest: "{{ node_exporter_bin_path }}"
+      owner: root
+      group: root
+      mode: 0755
+      remote_src: yes
+    notify: restart node_exporter
+
+  - name: Create node_exporter user.
+    user:
+      name: node_exporter
+      shell: /sbin/nologin
+      state: present
+
+  - name: Copy the node_exporter systemd unit file.
+    template:
+      src: /home/bishnoisiddhant99/node_exporter/tasks/templates/node_exporter.service.j2
+      dest: /etc/systemd/system/node_exporter.service
+      mode: 0644
+    register: node_exporter_service
+
+  - name: Reload systemd daemon if unit file is changed.
+    systemd:
+      daemon_reload: true
+      enabled: yes
+      state: started
+      name: node_exporter.service
+    notify: restart node_exporter
+    when: node_exporter_service is changed
+
+  - name: Ensure node_exporter is running and enabled at boot.
+    service:
+      name: node_exporter
+      state: "{{ node_exporter_state }}"
+      enabled: "{{ node_exporter_enabled }}"
+
+  - name: Verify node_exporter is responding to requests.
+    uri:
+      url: http://localhost:9100/
+      return_content: true
+    register: metrics_output
+    failed_when: "'Metrics' not in metrics_output.content"
+
+  handlers:
+  - name: restart node_exporter
+    service:
+      name: node_exporter
+      state: restarted
+
+
